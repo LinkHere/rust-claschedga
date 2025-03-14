@@ -1,188 +1,140 @@
-use rand::{Rng, prelude::{IndexedRandom, IndexedMutRandom}};
-use std::collections::HashSet;
+use rand::prelude::*;
+use rand::rng;
+use chrono::{NaiveTime, Duration};
 
-#[derive(Clone, Debug)]
-struct Class {
-    subject: String,
+#[derive(Debug, Clone)]
+struct ClassSchedule {
+    course: String,
     instructor: String,
     room: String,
-    time_slot: usize,
+    start_time: NaiveTime,
+    end_time: NaiveTime,
 }
 
-#[derive(Clone, Debug)]
-struct Schedule {
-    classes: Vec<Class>,
-    fitness: f64,
-}
-
-impl Schedule {
-    fn new(subjects: &[String], instructors: &[String], rooms: &[String], time_slots: usize) -> Self {
-        let mut rng = rand::rng();
-        let mut classes = Vec::new();
-
-        for subject in subjects {
-            let instructor = instructors.choose(&mut rng).unwrap().clone();
-            let room = rooms.choose(&mut rng).unwrap().clone();
-            let time_slot = rng.gen_range(0..time_slots);
-            classes.push(Class {
-                subject: subject.clone(),
-                instructor,
-                room,
-                time_slot,
-            });
+impl ClassSchedule {
+    fn new(course: &str, instructor: &str, room: &str, start_time: NaiveTime, duration: i64) -> Self {
+        Self {
+            course: course.to_string(),
+            instructor: instructor.to_string(),
+            room: room.to_string(),
+            start_time,
+            end_time: start_time + Duration::minutes(duration),
         }
-
-        let fitness = Schedule::calculate_fitness(&classes);
-        Schedule { classes, fitness }
-    }
-
-    fn calculate_fitness(classes: &[Class]) -> f64 {
-        let mut conflicts = 0;
-        let mut room_time_map = HashSet::new();
-        let mut instructor_time_map = HashSet::new();
-        let mut course_time_map = HashSet::new();
-        let mut conflict_details = Vec::new();
-
-        for class in classes {
-            let room_key = (class.room.clone(), class.time_slot);
-            let instructor_key = (class.instructor.clone(), class.time_slot);
-            let course_key = (class.subject.clone(), class.time_slot);
-
-            // Room Conflict: Same room booked at the same time
-            if !room_time_map.insert(room_key.clone()) {
-                conflicts += 1;
-                conflict_details.push(format!(
-                    "Room Conflict: {} at Time Slot {}",
-                    room_key.0, room_key.1
-                ));
-            }
-
-            // Instructor Conflict: Same instructor teaching two classes at the same time
-            if !instructor_time_map.insert(instructor_key.clone()) {
-                conflicts += 1;
-                conflict_details.push(format!(
-                    "Instructor Conflict: {} at Time Slot {}",
-                    instructor_key.0, instructor_key.1
-                ));
-            }
-
-            // Course Conflict: Same course scheduled in different rooms or with different instructors at the same time
-            if !course_time_map.insert(course_key.clone()) {
-                conflicts += 1;
-                conflict_details.push(format!(
-                    "Course Conflict: {} at Time Slot {} (Multiple Rooms/Instructors)",
-                    course_key.0, course_key.1
-                ));
-            }
-        }
-
-        // Display detected conflicts
-        if !conflict_details.is_empty() {
-            println!("Conflicts Detected:");
-            for conflict in &conflict_details {
-                println!("{}", conflict);
-            }
-        }
-
-        1.0 / (1.0 + conflicts as f64) // Higher fitness is better (fewer conflicts)
     }
 }
 
-impl Schedule {
-    fn crossover(&self, other: &Schedule) -> Schedule {
-        let mut rng = rand::rng();
-        let mut new_classes = Vec::new();
+fn generate_random_schedule(courses: &[&str], instructors: &[&str], rooms: &[&str], times: &[NaiveTime]) -> Vec<ClassSchedule> {
+    let mut rng = rng();
+    let mut schedule = Vec::new();
 
-        for i in 0..self.classes.len() {
-            if rng.gen_bool(0.5) {
-                new_classes.push(self.classes[i].clone());
-            } else {
-                new_classes.push(other.classes[i].clone());
+    for &course in courses {
+        let instructor = instructors.choose(&mut rng).unwrap();
+        let room = rooms.choose(&mut rng).unwrap();
+        let start_time = times.choose(&mut rng).unwrap();
+        let duration = [60, 90].choose(&mut rng).unwrap();
+
+        schedule.push(ClassSchedule::new(course, instructor, room, *start_time, *duration));
+    }
+
+    schedule
+}
+
+fn calculate_conflicts(schedule: &[ClassSchedule]) -> i32 {
+    let mut conflicts = 0;
+
+    for (i, class1) in schedule.iter().enumerate() {
+        for class2 in &schedule[i + 1..] {
+            if class1.instructor == class2.instructor && classes_overlap(class1, class2) {
+                println!("Conflict: Instructor {} has overlapping classes {} and {}", class1.instructor, class1.course, class2.course);
+                conflicts += 1;
+            }
+            if class1.room == class2.room && classes_overlap(class1, class2) {
+                println!("Conflict: Room {} is double-booked for {} and {}", class1.room, class1.course, class2.course);
+                conflicts += 1;
             }
         }
-
-        let fitness = Schedule::calculate_fitness(&new_classes);
-        Schedule { classes: new_classes, fitness }
     }
 
-    fn mutate(&mut self, instructors: &[String], rooms: &[String], time_slots: usize) {
-        let mut rng = rand::rng();
-        if let Some(class) = self.classes.choose_mut(&mut rng) {
-            class.instructor = instructors.choose(&mut rng).unwrap().clone();
-            class.room = rooms.choose(&mut rng).unwrap().clone();
-            class.time_slot = rng.gen_range(0..time_slots);
-        }
+    conflicts
+}
 
-        self.fitness = Schedule::calculate_fitness(&self.classes);
-    }
+fn classes_overlap(class1: &ClassSchedule, class2: &ClassSchedule) -> bool {
+    class1.start_time < class2.end_time && class2.start_time < class1.end_time
+}
+
+fn mutate(schedule: &mut Vec<ClassSchedule>, rooms: &[&str], times: &[NaiveTime]) {
+    let mut rng = rng();
+    let index = rng.random_range(0..schedule.len());
+    
+    schedule[index].room = rooms.choose(&mut rng).unwrap().to_string();
+    schedule[index].start_time = *times.choose(&mut rng).unwrap();
+    schedule[index].end_time = schedule[index].start_time + Duration::minutes(60);
+}
+
+fn crossover(parent1: &[ClassSchedule], parent2: &[ClassSchedule]) -> Vec<ClassSchedule> {
+    let mut rng = rng();
+    let crossover_point = rng.random_range(0..parent1.len());
+    
+    let mut child = Vec::new();
+    child.extend_from_slice(&parent1[..crossover_point]);
+    child.extend_from_slice(&parent2[crossover_point..]);
+
+    child
 }
 
 fn genetic_algorithm(
-    subjects: Vec<String>,
-    instructors: Vec<String>,
-    rooms: Vec<String>,
-    time_slots: usize,
-    population_size: usize,
+    courses: &[&str],
+    instructors: &[&str],
+    rooms: &[&str],
+    times: &[NaiveTime],
     generations: usize,
-) -> Schedule {
-    let mut rng = rand::rng();
-    let mut population: Vec<Schedule> = (0..population_size)
-        .map(|_| Schedule::new(&subjects, &instructors, &rooms, time_slots))
+) -> Vec<ClassSchedule> {
+    let mut population: Vec<Vec<ClassSchedule>> = (0..10)
+        .map(|_| generate_random_schedule(courses, instructors, rooms, times))
         .collect();
 
-    for gen in 0..generations {
-        // Sort by fitness (best first)
-        population.sort_by(|a, b| b.fitness.partial_cmp(&a.fitness).unwrap());
+    for _ in 0..generations {
+        population.sort_by_key(|schedule| calculate_conflicts(schedule));
+        
+        let parents = &population[..2]; // Best 2 schedules
+        let mut new_population = Vec::new();
 
-        // Show conflicts for best schedule in this generation
-        println!("\n=== Generation {} ===", gen + 1);
-        println!("Best Fitness: {:.5}", population[0].fitness);
-        Schedule::calculate_fitness(&population[0].classes);
-
-        // Select top half as parents
-        let parents = &population[..population_size / 2];
-
-        // Create next generation
-        let mut next_gen = parents.to_vec();
-
-        while next_gen.len() < population_size {
-            let parent1 = parents.choose(&mut rng).unwrap();
-            let parent2 = parents.choose(&mut rng).unwrap();
-            let mut child = parent1.crossover(parent2);
-            if rng.gen_bool(0.1) { // 10% mutation rate
-                child.mutate(&instructors, &rooms, time_slots);
-            }
-            next_gen.push(child);
+        for _ in 0..5 {
+            let child = crossover(&parents[0], &parents[1]);
+            new_population.push(child);
         }
 
-        population = next_gen;
+        for mut schedule in &mut new_population {
+            mutate(&mut schedule, rooms, times);
+        }
+
+        population = new_population;
     }
 
-    // Return best schedule
-    population.sort_by(|a, b| b.fitness.partial_cmp(&a.fitness).unwrap());
     population[0].clone()
 }
 
-fn main() {
-    let subjects = vec![
-        "Math".to_string(), 
-        "Physics".to_string(), 
-        //"Chemistry".to_string(),
-        //"Biology".to_string()
-    ];
-    let instructors = vec![
-        "Dr. Smith".to_string(), 
-        "Dr. Jones".to_string(), 
-        "Dr. Brown".to_string()
-    ];
-    let rooms = vec![
-        "Room 101".to_string(), 
-        //"Room 102".to_string()
-    ];
-    let time_slots = 2;
-    
-    let best_schedule = genetic_algorithm(subjects, instructors, rooms, time_slots, 10, 50);
 
-    println!("\n=== Best Final Schedule ===");
-    println!("{:?}", best_schedule);
+fn main() {
+    let courses = ["Math", "Science", "History", "English"];
+    let instructors = ["Alice", "Bob", "Charlie"];
+    let rooms = ["Room 101", "Room 102", "Room 103"];
+    let times: Vec<NaiveTime> = [
+        NaiveTime::from_hms_opt(8, 0, 0),
+        NaiveTime::from_hms_opt(9, 30, 0),
+        NaiveTime::from_hms_opt(11, 0, 0),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let best_schedule = genetic_algorithm(&courses, &instructors, &rooms, &times, 50);
+
+    println!("Optimized Schedule:");
+    for class in &best_schedule {
+        println!("{:?}", class);
+    }
+
+    let conflicts = calculate_conflicts(&best_schedule);
+    println!("Total Conflicts: {}", conflicts);
 }
